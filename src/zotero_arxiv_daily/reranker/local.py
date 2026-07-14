@@ -2,6 +2,10 @@ from .base import BaseReranker, register_reranker
 import logging
 import warnings
 import numpy as np
+import json
+from omegaconf import OmegaConf
+
+from .cache import EmbeddingCache
 @register_reranker("local")
 class LocalReranker(BaseReranker):
     def get_similarity_score(self, s1: list[str], s2: list[str]) -> np.ndarray:
@@ -24,7 +28,24 @@ class LocalReranker(BaseReranker):
             encode_kwargs = self.config.reranker.local.encode_kwargs
         else:
             encode_kwargs = {}
-        s1_feature = encoder.encode(s1,**encode_kwargs,show_progress_bar=True)
-        s2_feature = encoder.encode(s2,**encode_kwargs,show_progress_bar=True)
+        def encode(texts: list[str]) -> np.ndarray:
+            return encoder.encode(texts, **encode_kwargs, show_progress_bar=True)
+
+        s1_feature = encode(s1)
+        if self.config.reranker.cache.enabled:
+            namespace = json.dumps(
+                {
+                    "backend": "local",
+                    "model": str(self.config.reranker.local.model),
+                    "encode_kwargs": OmegaConf.to_container(
+                        self.config.reranker.local.encode_kwargs, resolve=True
+                    ),
+                },
+                sort_keys=True,
+            )
+            cache = EmbeddingCache(self.config.reranker.cache, namespace)
+            s2_feature = cache.get_or_compute(s2, encode)
+        else:
+            s2_feature = encode(s2)
         sim = encoder.similarity(s1_feature, s2_feature)
         return sim.numpy()

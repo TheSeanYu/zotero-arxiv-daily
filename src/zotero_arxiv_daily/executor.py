@@ -11,6 +11,10 @@ from .construct_email import render_email
 from .utils import send_email
 from openai import OpenAI
 from tqdm import tqdm
+from .exporter import ObsidianExporter
+from .summarizer import StructuredSummarizer
+from .web_publisher import WebPublisher
+from .retriever.arxiv_retriever import hydrate_arxiv_full_text
 
 
 def normalize_path_patterns(patterns: list[str] | ListConfig | None, config_key: str) -> list[str] | None:
@@ -29,6 +33,35 @@ def normalize_path_patterns(patterns: list[str] | ListConfig | None, config_key:
     return list(patterns)
 
 
+def select_publish_papers(
+    papers: list,
+    min_score: float,
+    min_export_num: int,
+    max_export_num: int | None,
+) -> list:
+    if min_export_num < 0:
+        raise ValueError("exporter.min_export_num must be non-negative")
+    if max_export_num is not None:
+        max_export_num = int(max_export_num)
+        if max_export_num < min_export_num:
+            raise ValueError("exporter.max_export_num must be null or at least min_export_num")
+
+    arxiv_papers = sorted(
+        (
+            paper
+            for paper in papers
+            if paper.source == "arxiv" and paper.score is not None
+        ),
+        key=lambda paper: paper.score,
+        reverse=True,
+    )
+    threshold_count = sum(paper.score >= min_score for paper in arxiv_papers)
+    selected_count = max(min_export_num, threshold_count)
+    if max_export_num is not None:
+        selected_count = min(selected_count, max_export_num)
+    return arxiv_papers[:selected_count]
+
+
 class Executor:
     def __init__(self, config:DictConfig):
         self.config = config
@@ -39,6 +72,21 @@ class Executor:
         }
         self.reranker = get_reranker_cls(config.executor.reranker)(config)
         self.openai_client = OpenAI(api_key=config.llm.api.key, base_url=config.llm.api.base_url)
+        self.summarizer = (
+            StructuredSummarizer(self.openai_client, config.llm, config.exporter.summary)
+            if config.exporter.enabled
+            else None
+        )
+        self.exporter = (
+            ObsidianExporter(config.exporter)
+            if config.exporter.enabled and config.exporter.obsidian.enabled
+            else None
+        )
+        self.web_publisher = (
+            WebPublisher(config.web)
+            if config.exporter.enabled and config.web.enabled
+            else None
+        )
     def fetch_zotero_corpus(self) -> list[CorpusPaper]:
         logger.info("Fetching zotero corpus")
         zot = zotero.Zotero(self.config.zotero.user_id, 'user', self.config.zotero.api_key)
@@ -109,16 +157,52 @@ class Executor:
         reranked_papers = []
         if len(all_papers) > 0:
             logger.info("Reranking papers...")
-            reranked_papers = self.reranker.rerank(all_papers, corpus)
-            reranked_papers = reranked_papers[:self.config.executor.max_paper_num]
+            ranked_papers = self.reranker.rerank(all_papers, corpus)
+            reranked_papers = ranked_papers[:self.config.executor.max_paper_num]
+            if ranked_papers:
+                logger.info(
+                    "Top reranker scores: "
+                    + ", ".join(f"{paper.score:.3f}" for paper in ranked_papers[:10])
+                )
             logger.info("Generating TLDR and affiliations...")
             for p in tqdm(reranked_papers):
                 p.generate_tldr(self.openai_client, self.config.llm)
                 p.generate_affiliations(self.openai_client, self.config.llm)
+            if self.summarizer is not None:
+                publish_papers = select_publish_papers(
+                    ranked_papers,
+                    float(self.config.exporter.min_score),
+                    int(self.config.exporter.min_export_num),
+                    self.config.exporter.max_export_num,
+                )
+                logger.info(
+                    f"Selected {len(publish_papers)} papers: top "
+                    f"{self.config.exporter.min_export_num} plus all scores >= "
+                    f"{self.config.exporter.min_score}"
+                )
+                logger.info(f"Fetching full text for {len(publish_papers)} selected arXiv papers...")
+                for paper in tqdm(publish_papers):
+                    hydrate_arxiv_full_text(paper)
+                logger.info(f"Generating structured summaries for {len(publish_papers)} papers...")
+                for paper in tqdm(publish_papers):
+                    self.summarizer.summarize(paper)
+                if self.exporter is not None:
+                    self.exporter.export(publish_papers)
+                if self.web_publisher is not None:
+                    self.web_publisher.publish(publish_papers)
         elif not self.config.executor.send_empty:
-            logger.info("No new papers found. No email will be sent.")
-            return
-        logger.info("Sending email...")
-        email_content = render_email(reranked_papers)
-        send_email(self.config, email_content)
-        logger.info("Email sent successfully")
+            logger.info("No new papers found. Publishing maintenance will still run.")
+
+        if self.summarizer is not None and not reranked_papers:
+            if self.exporter is not None:
+                self.exporter.export([])
+            if self.web_publisher is not None:
+                self.web_publisher.publish([])
+
+        if self.config.email.enabled and (reranked_papers or self.config.executor.send_empty):
+            logger.info("Sending email...")
+            email_content = render_email(reranked_papers)
+            send_email(self.config, email_content)
+            logger.info("Email sent successfully")
+        else:
+            logger.info("Email delivery is disabled or there are no papers to send")

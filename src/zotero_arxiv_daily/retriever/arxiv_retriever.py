@@ -11,14 +11,23 @@ import os
 from queue import Empty
 from time import sleep
 from typing import Any, Callable, TypeVar
+from types import SimpleNamespace
 from loguru import logger
 import requests
+import re
 
 T = TypeVar("T")
 
 DOWNLOAD_TIMEOUT = (10, 60)
 PDF_EXTRACT_TIMEOUT = 180
-TAR_EXTRACT_TIMEOUT = 180
+HTML_EXTRACT_TIMEOUT = 60
+TAR_EXTRACT_TIMEOUT = 60
+
+
+def _secure_arxiv_url(url: str | None) -> str | None:
+    if url is None:
+        return None
+    return re.sub(r"^http://(?:export\.)?arxiv\.org/", "https://arxiv.org/", url)
 
 
 def _download_file(url: str, path: str) -> None:
@@ -49,8 +58,7 @@ def _run_with_hard_timeout(
     operation: str,
     paper_title: str,
 ) -> T | None:
-    start_methods = multiprocessing.get_all_start_methods()
-    context = multiprocessing.get_context("fork" if "fork" in start_methods else start_methods[0])
+    context = multiprocessing.get_context("spawn")
     result_queue = context.Queue()
     process = context.Process(target=_run_in_subprocess, args=(result_queue, func, args))
     process.start()
@@ -160,30 +168,51 @@ class ArxivRetriever(BaseRetriever):
         title = raw_paper.title
         authors = [a.name for a in raw_paper.authors]
         abstract = raw_paper.summary
-        pdf_url = raw_paper.pdf_url
-        full_text = extract_text_from_tar(raw_paper)
-        if full_text is None:
-            full_text = extract_text_from_html(raw_paper)
-        if full_text is None:
-            full_text = extract_text_from_pdf(raw_paper)
+        pdf_url = _secure_arxiv_url(raw_paper.pdf_url)
         return Paper(
             source=self.name,
             title=title,
             authors=authors,
             abstract=abstract,
-            url=raw_paper.entry_id,
+            url=_secure_arxiv_url(raw_paper.entry_id),
             pdf_url=pdf_url,
-            full_text=full_text,
+            full_text=None,
         )
+
+
+def hydrate_arxiv_full_text(paper: Paper) -> str | None:
+    if paper.source != "arxiv":
+        return paper.full_text
+    if paper.full_text:
+        return paper.full_text
+
+    paper_url = _secure_arxiv_url(paper.url)
+    pdf_url = _secure_arxiv_url(paper.pdf_url)
+    target = SimpleNamespace(
+        title=paper.title,
+        entry_id=paper_url,
+        pdf_url=pdf_url,
+        source_url=lambda: paper_url.replace("/abs/", "/e-print/"),
+    )
+    logger.info(f"Fetching selected paper full text: {paper.url}")
+    full_text = extract_text_from_html(target)
+    if full_text is None:
+        full_text = extract_text_from_tar(target)
+    if full_text is None:
+        full_text = extract_text_from_pdf(target)
+    paper.full_text = full_text
+    return full_text
 
 
 def extract_text_from_html(paper: ArxivResult) -> str | None:
     html_url = paper.entry_id.replace("/abs/", "/html/")
-    try:
-        return _extract_text_from_html_worker(html_url)
-    except Exception as exc:
-        logger.warning(f"HTML extraction failed for {paper.title}: {exc}")
-        return None
+    return _run_with_hard_timeout(
+        _extract_text_from_html_worker,
+        (html_url,),
+        timeout=HTML_EXTRACT_TIMEOUT,
+        operation="HTML extraction",
+        paper_title=paper.title,
+    )
 
 
 def extract_text_from_pdf(paper: ArxivResult) -> str | None:

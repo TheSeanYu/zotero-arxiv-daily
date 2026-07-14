@@ -1,3 +1,13 @@
 defaults:
   - base
   - custom
+  - optional private@_global_: local
+  - _self_
+
+# Do not persist the composed config: it contains credentials from private/local.yaml.
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

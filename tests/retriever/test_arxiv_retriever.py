@@ -5,8 +5,13 @@ from types import SimpleNamespace
 
 import feedparser
 
-from zotero_arxiv_daily.retriever.arxiv_retriever import ArxivRetriever, _run_with_hard_timeout
+from zotero_arxiv_daily.retriever.arxiv_retriever import (
+    ArxivRetriever,
+    _run_with_hard_timeout,
+    hydrate_arxiv_full_text,
+)
 import zotero_arxiv_daily.retriever.arxiv_retriever as arxiv_retriever
+from tests.canned_responses import make_sample_paper
 
 
 def _sleep_and_return(value: str, delay_seconds: float) -> str:
@@ -51,16 +56,54 @@ def test_arxiv_retriever(config, mock_feedparser, monkeypatch):
 
     monkeypatch.setattr(arxiv_retriever.arxiv, "Client", FakeClient)
 
-    # Skip file downloads in convert_to_paper
-    monkeypatch.setattr(arxiv_retriever, "extract_text_from_html", lambda paper: None)
-    monkeypatch.setattr(arxiv_retriever, "extract_text_from_pdf", lambda paper: None)
-    monkeypatch.setattr(arxiv_retriever, "extract_text_from_tar", lambda paper: None)
-
     retriever = ArxivRetriever(config)
     papers = retriever.retrieve_papers()
 
     assert len(papers) == len(new_entries)
     assert set(p.title for p in papers) == set(e.title for e in new_entries)
+    assert all(p.full_text is None for p in papers)
+
+
+def test_hydrate_full_text_runs_only_for_selected_paper(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        arxiv_retriever,
+        "extract_text_from_tar",
+        lambda paper: calls.append(("tar", paper.entry_id)) or None,
+    )
+    monkeypatch.setattr(
+        arxiv_retriever,
+        "extract_text_from_html",
+        lambda paper: calls.append(("html", paper.entry_id)) or "full text",
+    )
+    monkeypatch.setattr(
+        arxiv_retriever,
+        "extract_text_from_pdf",
+        lambda paper: calls.append(("pdf", paper.entry_id)) or None,
+    )
+    paper = make_sample_paper(full_text=None)
+
+    assert hydrate_arxiv_full_text(paper) == "full text"
+    assert paper.full_text == "full text"
+    assert calls == [("html", paper.url)]
+
+    assert hydrate_arxiv_full_text(paper) == "full text"
+    assert calls == [("html", paper.url)]
+
+
+def test_convert_to_paper_normalizes_arxiv_urls_to_https(config):
+    retriever = ArxivRetriever(config)
+    raw = SimpleNamespace(
+        title="Paper",
+        authors=[SimpleNamespace(name="Author")],
+        summary="Abstract",
+        pdf_url="http://arxiv.org/pdf/2607.08784v1",
+        entry_id="http://export.arxiv.org/abs/2607.08784v1",
+    )
+
+    paper = retriever.convert_to_paper(raw)
+    assert paper.url == "https://arxiv.org/abs/2607.08784v1"
+    assert paper.pdf_url == "https://arxiv.org/pdf/2607.08784v1"
 
 
 def test_run_with_hard_timeout_returns_value():

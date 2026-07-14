@@ -14,10 +14,12 @@ source:
     category: null # The categories of target medrxiv papers. Find categories from [here](https://www.medrxiv.org/) Example: ["psychiatry and clinical psychology", "neurology"]
 
 email:
+  enabled: true # Whether to send the HTML email after processing.
   sender: ??? # The email account of the SMTP server that sends you email. Example: abc@qq.com
   receiver: ??? # The email account that receives the paper list. Example: abc@outlook.com
   smtp_server: ??? # The SMTP server that sends the email. Ask your email provider (Gmail, QQ, Outlook, ...) for its SMTP server. Example: smtp.qq.com
   smtp_port: ??? # The port of SMTP server. Example: 465
+  security: auto # auto, ssl, starttls, or plain. Port 465 uses SSL in auto mode.
   sender_password: ??? # The password of the sender account. Note that it's not necessarily the password for logging in the e-mail client, but the authentication code for SMTP service. Ask your email provider for this. Example: abcdefghijklmn
 
 llm:
@@ -31,6 +33,11 @@ llm:
   language: English # Preferred language for the TL;DR. Example: English
 
 reranker:
+  cache:
+    enabled: false # Cache Zotero corpus embeddings in a local SQLite database.
+    path: null
+    max_entries: 2000 # LRU hard limit across cached models/namespaces.
+    max_age_days: 180 # Delete entries not used within this many days; null disables age cleanup.
   local:
     model: jinaai/jina-embeddings-v5-text-nano-retrieval # The Hugging Face model name of the local embedding model. Example: jinaai/jina-embeddings-v5-text-nano
     encode_kwargs:
@@ -49,3 +56,29 @@ executor:
   max_paper_num: 100 # The maximum number of the papers presented in the email. Example: 100
   source: ??? # The sources of papers to retrieve. Example: ['arxiv','biorxiv','medrxiv']
   reranker: local # The reranker to use. Example: 'local' or 'api'
+
+exporter:
+  enabled: false # Export selected arXiv papers to an Obsidian vault. Example: true
+  min_score: 4.8 # Minimum reranker score required for export; calibrate from observed scores.
+  min_export_num: 3 # Always publish at least the top N arXiv papers.
+  max_export_num: null # Optional hard cap; null keeps every paper above min_score.
+  obsidian:
+    enabled: true
+    vault_path: null # Server path to the dedicated arxiv-daily directory.
+    retention:
+      enabled: true # Remove date directories older than the retention window.
+      days: 7
+      timezone: Asia/Shanghai
+      directory_format: "%Y-%m-%d"
+      dry_run: true # Log expired directories without deleting them.
+  summary:
+    language: Chinese
+    max_input_tokens: 24000
+    chunk_tokens: 8000
+
+web:
+  enabled: false # Generate static HTML pages for selected papers.
+  output_dir: null
+  title: "每日 arXiv 推荐"
+  timezone: Asia/Shanghai
+  archive_days: 30

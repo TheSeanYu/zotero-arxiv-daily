@@ -5,8 +5,8 @@ from datetime import datetime
 import pytest
 from omegaconf import OmegaConf
 
-from zotero_arxiv_daily.executor import Executor, normalize_path_patterns
-from zotero_arxiv_daily.protocol import CorpusPaper
+from zotero_arxiv_daily.executor import Executor, normalize_path_patterns, select_publish_papers
+from zotero_arxiv_daily.protocol import CorpusPaper, Paper
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +43,50 @@ def test_normalize_path_patterns_accepts_empty_list():
 
 def test_normalize_path_patterns_accepts_none():
     assert normalize_path_patterns(None, "include_path") is None
+
+
+def _scored_paper(title, score, source="arxiv"):
+    return Paper(source=source, title=title, authors=[], abstract="", url="", score=score)
+
+
+def test_select_publish_papers_is_top_n_union_threshold():
+    papers = [
+        _scored_paper("A", 5.2),
+        _scored_paper("B", 5.1),
+        _scored_paper("C", 4.9),
+        _scored_paper("D", 4.8),
+        _scored_paper("E", 4.2),
+    ]
+    selected = select_publish_papers(
+        papers, min_score=4.8, min_export_num=2, max_export_num=None
+    )
+    assert [paper.title for paper in selected] == ["A", "B", "C", "D"]
+
+
+def test_select_publish_papers_fills_to_minimum():
+    papers = [
+        _scored_paper("A", 4.7),
+        _scored_paper("B", 4.0),
+        _scored_paper("C", 3.0),
+        _scored_paper("Other", 9.0, source="biorxiv"),
+    ]
+    selected = select_publish_papers(
+        papers, min_score=4.8, min_export_num=2, max_export_num=None
+    )
+    assert [paper.title for paper in selected] == ["A", "B"]
+
+
+def test_select_publish_papers_optional_hard_cap():
+    papers = [_scored_paper(str(index), 10 - index) for index in range(5)]
+    selected = select_publish_papers(
+        papers, min_score=0, min_export_num=2, max_export_num=3
+    )
+    assert len(selected) == 3
+
+
+def test_select_publish_papers_rejects_cap_below_minimum():
+    with pytest.raises(ValueError, match="max_export_num"):
+        select_publish_papers([], min_score=4.8, min_export_num=3, max_export_num=2)
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +192,8 @@ def test_fetch_zotero_corpus_paper_with_zero_collections(config, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_run_end_to_end(config, monkeypatch):
-    """Full pipeline: Zotero fetch -> filter -> retrieve -> rerank -> TLDR -> email."""
+def test_run_end_to_end(config, monkeypatch, tmp_path):
+    """Full pipeline: retrieve, rerank, summarize, email, Markdown, and HTML."""
     import smtplib
 
     from omegaconf import open_dict
@@ -167,6 +211,12 @@ def test_run_end_to_end(config, monkeypatch):
         config.executor.source = ["arxiv"]
         config.executor.reranker = "api"
         config.executor.send_empty = False
+        config.exporter.enabled = True
+        config.exporter.min_score = -100
+        config.exporter.obsidian.enabled = True
+        config.exporter.obsidian.vault_path = str(tmp_path / "vault")
+        config.web.enabled = True
+        config.web.output_dir = str(tmp_path / "web")
 
     # 1. Stub pyzotero
     stub_zot = make_stub_zotero_client()
@@ -207,6 +257,9 @@ def test_run_end_to_end(config, monkeypatch):
     assert len(sent) == 1, "Email should have been sent"
     _, _, email_body = sent[0]
     assert "text/html" in email_body
+    assert list((tmp_path / "vault").glob("*/*.md")), "Markdown notes should be exported"
+    assert list((tmp_path / "web").glob("????-??-??.html")), "A daily HTML page should be generated"
+    assert (tmp_path / "web" / "index.html").exists()
 
 
 def test_run_no_papers_send_empty_false(config, monkeypatch):

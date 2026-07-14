@@ -145,6 +145,14 @@ def send_email(config:DictConfig, html:str):
     password = config.email.sender_password
     smtp_server = config.email.smtp_server
     smtp_port = config.email.smtp_port
+    security = str(config.email.get("security", "auto")).lower()
+
+    for config_key, value in (("email.sender", sender), ("email.receiver", receiver)):
+        address = parseaddr(str(value))[1]
+        if "@" not in address or address.startswith("@") or address.endswith("@"):
+            raise ValueError(f"{config_key} must be a valid email address")
+    if security not in {"auto", "ssl", "starttls", "plain"}:
+        raise ValueError("email.security must be one of: auto, ssl, starttls, plain")
     def _format_addr(s):
         name, addr = parseaddr(s)
         return formataddr((Header(name, 'utf-8').encode(), addr))
@@ -155,16 +163,24 @@ def send_email(config:DictConfig, html:str):
     today = datetime.datetime.now().strftime('%Y/%m/%d')
     msg['Subject'] = Header(f'Daily arXiv {today}', 'utf-8').encode()
 
-    try:
+    if security == "ssl" or (security == "auto" and smtp_port == 465):
+        server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+    elif security == "starttls":
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
-    except Exception as e:
-        logger.debug(f"Failed to use TLS. {e}\nTry to use SSL.")
+    elif security == "plain":
+        server = smtplib.SMTP(smtp_server, smtp_port)
+    else:
         try:
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port)
-        except Exception as e:
-            logger.debug(f"Failed to use SSL. {e}\nTry to use plain text.")
             server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+        except Exception as e:
+            logger.debug(f"Failed to use TLS. {e}\nTry to use SSL.")
+            try:
+                server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+            except Exception as e:
+                logger.debug(f"Failed to use SSL. {e}\nTry to use plain text.")
+                server = smtplib.SMTP(smtp_server, smtp_port)
 
     server.login(sender, password)
     server.sendmail(sender, [receiver], msg.as_string())

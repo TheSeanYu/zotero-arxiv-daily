@@ -1,0 +1,83 @@
+# Copy this file to config/private/local.yaml and fill in local values.
+# config/private/local.yaml is ignored by Git and must never be committed.
+
+zotero:
+  user_id: "YOUR_ZOTERO_USER_ID"
+  api_key: "YOUR_ZOTERO_API_KEY"
+  include_path: null
+  ignore_path: null
+
+source:
+  arxiv:
+    category: ["cs.AI", "cs.CV", "cs.LG", "cs.CL"]
+    include_cross_list: false
+  biorxiv:
+    category: null
+  medrxiv:
+    category: null
+
+llm:
+  api:
+    key: "YOUR_LLM_API_KEY"
+    base_url: "https://api.openai.com/v1"
+  generation_kwargs:
+    model: "YOUR_CHAT_MODEL"
+    max_tokens: 16384
+  language: Chinese
+
+reranker:
+  cache:
+    enabled: true
+    path: "/absolute/path/to/local/embedding-cache.sqlite3"
+    max_entries: 2000
+    max_age_days: 180
+  # Use "local" in executor.reranker to avoid an embedding API key.
+  api:
+    key: "YOUR_EMBEDDING_API_KEY"
+    base_url: "https://api.openai.com/v1"
+    model: "YOUR_EMBEDDING_MODEL"
+    batch_size: 64
+
+executor:
+  debug: false
+  send_empty: false
+  max_paper_num: 100
+  source: ["arxiv"]
+  reranker: local
+
+email:
+  enabled: true
+  sender: "sender@example.com"
+  receiver: "receiver@example.com"
+  smtp_server: "smtp.example.com"
+  smtp_port: 465
+  security: ssl
+  sender_password: "YOUR_SMTP_PASSWORD"
+
+exporter:
+  enabled: true
+  min_score: 4.8
+  min_export_num: 3
+  max_export_num: null
+  obsidian:
+    enabled: true
+    # Use a local temporary/output directory during development. Set the
+    # server vault path only in the server's private/local.yaml.
+    vault_path: "/absolute/path/to/local/arxiv-daily"
+    retention:
+      enabled: true
+      days: 7
+      timezone: Asia/Shanghai
+      directory_format: "%Y-%m-%d"
+      dry_run: true
+  summary:
+    language: Chinese
+    max_input_tokens: 24000
+    chunk_tokens: 8000
+
+web:
+  enabled: true
+  output_dir: "/absolute/path/to/local/arxiv-daily-html"
+  title: "每日 arXiv 推荐"
+  timezone: Asia/Shanghai
+  archive_days: 30

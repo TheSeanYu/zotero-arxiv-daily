@@ -172,12 +172,22 @@ By default, the main workflow runs on 22:00 UTC everyday. You can change this ti
 ### Local Running
 Supported by [uv](https://github.com/astral-sh/uv), this workflow can easily run on your local device if uv is installed:
 ```bash
-# set all the environment variables
-# export ZOTERO_ID=xxxx
-# ...
 cd zotero-arxiv-daily
-uv run main.py
+uv sync
+
+# Keep API keys, output switches, and local paths in one ignored file.
+cp config/private/local.example.yaml config/private/local.yaml
+chmod 600 config/private/local.yaml
+
+# Edit config/private/local.yaml, then verify Git will ignore it.
+git check-ignore config/private/local.yaml
+
+uv run src/zotero_arxiv_daily/main.py
 ```
+
+`config/private/local.example.yaml` is the committed template. The populated
+`config/private/local.yaml` is loaded automatically and ignored by Git; never
+put real credentials in the example file.
 
 ## 🚀 Sync with the latest version
 This project is in active development. You can subscribe this repo via `Watch` so that you can be notified once we publish new release.

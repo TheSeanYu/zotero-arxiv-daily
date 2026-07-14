@@ -22,7 +22,7 @@ def _base_config():
     GlobalHydra.instance().clear()
     with initialize_config_dir(config_dir=_CONFIG_DIR, version_base=None):
         cfg = compose(
-            config_name="default",
+            config_name="base",
             overrides=[
                 "zotero.user_id=000000",
                 "zotero.api_key=fake-zotero-key",

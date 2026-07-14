@@ -121,6 +121,33 @@ class TestGlobMatch:
 # ---------------------------------------------------------------------------
 
 
+def test_send_email_rejects_invalid_sender(config):
+    from omegaconf import open_dict
+
+    with open_dict(config):
+        config.email.sender = "missing-at.example.com"
+
+    with pytest.raises(ValueError, match="email.sender"):
+        send_email(config, "<html>hello</html>")
+
+
+def test_send_email_port_465_uses_ssl_directly(config, monkeypatch):
+    from omegaconf import open_dict
+
+    sent = []
+    with open_dict(config):
+        config.email.smtp_port = 465
+    monkeypatch.setattr(
+        smtplib,
+        "SMTP",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("SMTP should not be used")),
+    )
+    monkeypatch.setattr(smtplib, "SMTP_SSL", make_stub_smtp(sent))
+
+    send_email(config, "<html>ssl</html>")
+    assert len(sent) == 1
+
+
 def test_send_email_starttls_success(config, monkeypatch):
     sent = []
     monkeypatch.setattr(smtplib, "SMTP", make_stub_smtp(sent))
