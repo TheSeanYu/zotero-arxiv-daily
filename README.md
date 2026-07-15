@@ -141,6 +141,7 @@ llm:
 reranker:
   local:
     model: jinaai/jina-embeddings-v5-text-nano # The Hugging Face model name of the local embedding model. Example: jinaai/jina-embeddings-v5-text-nano
+    hf_endpoint_fallbacks: ["https://hf-mirror.com"] # Retry these Hugging Face endpoints if the default endpoint fails while loading the local model.
     encode_kwargs:
     # The kwargs for the encode method of the local embedding model. Details see [here](https://www.sbert.net/docs/package_reference/SentenceTransformer.html#sentence_transformers.SentenceTransformer.encode)
       task: retrieval

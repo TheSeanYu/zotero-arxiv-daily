@@ -47,6 +47,46 @@
 - 真实 HTML 日报和 `index.html` 已生成，日报包含结构化总结。
 - SMTP sender 与授权码已经修正，QQ `465/SSL` 登录和最小测试邮件发送成功。
 
+### 本机生产级 Canary 结果
+
+生产配置 canary 验证日期：2026-07-14。运行命令为
+`uv run src/zotero_arxiv_daily/main.py`，总耗时约 13 分钟，进程以退出码 0
+结束。
+
+- 从 Zotero 读取 24 篇语料，从 arXiv 获取并转换 195 篇候选。
+- 本地 embedding 缓存为 `24 hits / 0 misses`；缓存数据库保持 24 条记录，
+  文件权限为 `0600`。
+- 完成 100 篇候选的 TLDR 与机构生成，最高重排分数为 `5.211`。
+- 发布规则 `Top 3 + score >= 4.8` 的并集选出 7 篇，未触发
+  `max_export_num: 50` 硬上限。
+- 7 篇均完成结构化总结；其中 1 篇 arXiv HTML 下载失败后按设计降级，未中断
+  其余处理和最终发布。
+- 同一次运行成功写入 7 个 Markdown、生成包含 7 篇论文的当日 HTML 与
+  `index.html`，并成功发送生产邮件。Markdown 与 HTML 均包含 arXiv 摘要页和
+  PDF 链接。
+- 七日清理在本次运行中保持 `dry_run: true`，没有执行真实删除。
+
+本次 canary 证明本机生产配置下的论文抓取、重排、缓存、LLM 总结、Markdown、
+HTML 和邮件链路可以在同一次运行中完成。
+
+### 本机真实七日清理 Canary 结果
+
+清理 canary 验证日期：2026-07-15。测试目录为
+`/private/tmp/zotero-arxiv-daily-retention-canary`，配置与生产保留策略一致：
+`retention.days: 7`、`timezone: Asia/Shanghai`、`directory_format: "%Y-%m-%d"`、
+`dry_run: false`。
+
+测试预置了 `2026-07-07` 到 `2026-07-15` 共 9 个日期目录，并额外创建
+`archive/` 非日期目录和根目录 `README.md`。执行真实清理后：
+
+- `2026-07-09` 到 `2026-07-15` 保留，正好覆盖最近 7 个自然日。
+- `2026-07-08` 和 `2026-07-07` 被真实删除。
+- `archive/` 和 `README.md` 均保留，说明清理逻辑只处理符合日期格式的直属目录。
+
+该测试证明七日循环保留策略可以在隔离目录中真实删除过期日期目录。服务器部署
+时仍建议先用 `dry_run: true` 跑一次，确认日志中的待删除路径符合预期后再打开
+真实删除。
+
 真实试运行同时发现并修复了以下问题：
 
 1. 全文提取原本发生在重排前，会对全部候选下载正文；现已延迟到重排后的
@@ -311,6 +351,10 @@ exporter:
       dry_run: true
 
 reranker:
+  local:
+    hf_endpoint_fallbacks:
+      - "https://hf-mirror.com"
+
   cache:
     enabled: true
     path: "/var/lib/zotero-arxiv-daily/embedding-cache.sqlite3"
@@ -347,8 +391,8 @@ reranker:
 - [x] 邮件增加 arXiv 摘要页链接。
 - [x] 在本机用真实 Zotero、arXiv 和 LLM 生成 Markdown 与 HTML。
 - [x] QQ SMTP 登录成功并发送真实测试邮件。
-- [ ] 在本机验证邮件、Markdown 和 HTML 同次运行均成功生成。
-- [ ] 在本机以临时目录验证真实七日清理。
+- [x] 在本机验证邮件、Markdown 和 HTML 同次运行均成功生成。
+- [x] 在本机以临时目录验证真实七日清理。
 
 ### Phase 2：服务器部署与运行保障
 

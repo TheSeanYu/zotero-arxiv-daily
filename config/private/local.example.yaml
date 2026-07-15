@@ -32,6 +32,8 @@ reranker:
     max_entries: 2000
     max_age_days: 180
   # Use "local" in executor.reranker to avoid an embedding API key.
+  local:
+    hf_endpoint_fallbacks: ["https://hf-mirror.com"]
   api:
     key: "YOUR_EMBEDDING_API_KEY"
     base_url: "https://api.openai.com/v1"

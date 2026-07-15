@@ -13,6 +13,7 @@ wheels/
 test.ipynb
 
 logs
+main.log
 models
 test-compose.yml
 outputs
